@@ -25,39 +25,42 @@
 // SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 #include <RTIMULib.h>
-#include <ros/ros.h>
-#include <sensor_msgs/Imu.h>
+#include <rclcpp/rclcpp.hpp>
+#include <sensor_msgs/msg/imu.hpp>
+
+#include <chrono>
+#include <memory>
 
 static const double G_TO_MPSS = 9.80665;
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "rtimulib_node");
-    ROS_INFO("Imu driver is now running");
-    ros::NodeHandle nh("~");
+    rclcpp::init(argc, argv);
+    auto node = rclcpp::Node::make_shared("rtimulib_node");
+
+    RCLCPP_INFO(node->get_logger(), "Imu driver is now running");
 
     std::string calibration_file_path;
-    if(!nh.getParam("calibration_file_path", calibration_file_path))
-    {
-        ROS_ERROR("The calibration_file_path parameter must be set to use a "
-                  "calibration file.");
-        ROS_BREAK();
-    }
+    // if(!nh.getParam("calibration_file_path", calibration_file_path))
+    // {
+    //     RCLCPP_ERROR(node->get_logger(), "The calibration_file_path parameter must be set to use a "
+    //              "calibration file.");
+    // }
 
     std::string calibration_file_name = "RTIMULib";
-    if(!nh.getParam("calibration_file_name", calibration_file_name))
-    {
-        ROS_WARN_STREAM("No calibration_file_name provided - default: "
-                        << calibration_file_name);
-    }
+    // if(!nh.getParam("calibration_file_name", calibration_file_name))
+    // {
+    //    ROS_WARN_STREAM("No calibration_file_name provided - default: "
+    //                    << calibration_file_name);
+    // }
 
     std::string frame_id = "imu_link";
-    if(!nh.getParam("frame_id", frame_id))
-    {
-        ROS_WARN_STREAM("No frame_id provided - default: " << frame_id);
-    }
+    // if(!nh.getParam("frame_id", frame_id))
+    // {
+    //    ROS_WARN_STREAM("No frame_id provided - default: " << frame_id);
+    //}
 
-    ros::Publisher imu_pub = nh.advertise<sensor_msgs::Imu>("imu", 1);
+    auto imu_pub = node->create_publisher<sensor_msgs::msg::Imu>("imu", 1);
 
     // Load the RTIMULib.ini config file
     RTIMUSettings *settings = new RTIMUSettings(calibration_file_path.c_str(),
@@ -67,8 +70,7 @@ int main(int argc, char **argv)
 
     if ((imu == NULL) || (imu->IMUType() == RTIMU_TYPE_NULL))
     {
-        ROS_ERROR("No Imu found");
-        ROS_BREAK();
+        RCLCPP_ERROR(node->get_logger(), "No Imu found");
     }
 
     // Initialise the imu object
@@ -81,14 +83,16 @@ int main(int argc, char **argv)
     imu->setAccelEnable(true);
     imu->setCompassEnable(true);
 
-    sensor_msgs::Imu imu_msg;
-    while (ros::ok())
-    {
+    sensor_msgs::msg::Imu imu_msg;
+
+    auto imu_pub_timer = node->create_wall_timer(
+      std::chrono::duration<double>(imu->IMUGetPollInterval() / 1000.0),
+      [&](){
         if (imu->IMURead())
         {
             RTIMU_DATA imu_data = imu->getIMUData();
 
-            imu_msg.header.stamp = ros::Time::now();
+            imu_msg.header.stamp = node->now();
             imu_msg.header.frame_id = frame_id;
 
             imu_msg.orientation.x = imu_data.fusionQPose.x(); 
@@ -104,10 +108,12 @@ int main(int argc, char **argv)
             imu_msg.linear_acceleration.y = imu_data.accel.y() * G_TO_MPSS;
             imu_msg.linear_acceleration.z = imu_data.accel.z() * G_TO_MPSS;
 
-            imu_pub.publish(imu_msg);
+            imu_pub->publish(imu_msg);
         }
-        ros::spinOnce();
-        ros::Duration(imu->IMUGetPollInterval() / 1000.0).sleep();
-    }
+      }
+    );
+    rclcpp::spin(node);
+
+    rclcpp::shutdown();
     return 0;
 }
